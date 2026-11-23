@@ -89,6 +89,7 @@ export interface TrackedHand {
   openPalm: boolean; // open flat hand (palm facing camera) for Palm Mute
   backFacing: boolean; // dorsal/back of hand facing camera
   fiveFingersOpen: boolean; // all 5 fingers clearly extended
+  closedFist: boolean; // all 4 main fingers curled tightly into a fist (for holographic timbre wheel)
   extendedFingers: number[]; // fingertip indices among [4, 8, 12, 16, 20]
   activeFingers: ActiveFinger[];
 }
@@ -207,4 +208,16 @@ export interface AppSettings {
   reverbAmount: number; // 0..1
   mirrorCamera: boolean;
   localMute: boolean;
+}
+
+export interface TimbreWheelSnapshot {
+  phase: 'idle' | 'charging' | 'open';
+  handId: string | null;
+  anchor: Vec2; // normalized [0,1] center of wheel (x left->right, y top->bottom)
+  cursor: Vec2; // normalized [0,1] live fist cursor position
+  chargeProgress: number; // 0..1 while arming closed fist
+  openAnim: number; // 0..1 smooth expand progress
+  hoveredIndex: number | null; // 0..4 or null in center deadzone
+  activeTimbre: TimbreId;
+  sectors: TimbreId[];
 }

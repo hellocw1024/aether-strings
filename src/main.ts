@@ -1,8 +1,9 @@
 import './style.css';
 import { AudioEngine } from './audio/AudioEngine';
 import { MidiEngine } from './audio/MidiEngine';
-import { BgSwipeDetector, pickRandomNextBg } from './core/BgSwipeDetector';
+import { BgSwipeDetector, pickNextCyclicBg } from './core/BgSwipeDetector';
 import { StringManager } from './core/StringManager';
+import { TIMBRE_WHEEL_ORDER, TimbreWheelController } from './core/TimbreWheel';
 import {
   detectBrowserLocale,
   getLocaleNativeName,
@@ -58,6 +59,7 @@ class AirStringsApp {
   private midi: MidiEngine;
   private tracker: HandTracker;
   private bgSwipe = new BgSwipeDetector();
+  private timbreWheel = new TimbreWheelController();
   private recorder: PerformanceRecorder;
   private ui: ControlPanel;
 
@@ -107,9 +109,9 @@ class AirStringsApp {
     this.renderer.setCameraFilter(this.settings.cameraFilter);
     this.renderer.setHandVisual(this.settings.handVisual);
     this.renderer.setMirror(this.settings.mirrorCamera);
+    this.syncWheelTimbreLabels();
 
-    // Pre-seed a clean constellation behind the welcome card
-    this.strings.loadPreset('web');
+    // Start with a clean empty stage (no preset strings auto-loaded on initial load)
 
     this.ui = new ControlPanel(this.hudRoot, this.settings, this.locale, this.localePref, {
       onStartCamera: () => this.startCameraSession(),
@@ -158,11 +160,22 @@ class AirStringsApp {
     return t(this.locale, key, vars);
   }
 
+  private syncWheelTimbreLabels(): void {
+    this.renderer.setTimbreLabels({
+      harp: this.tr('timbre_harp'),
+      guzheng: this.tr('timbre_guzheng'),
+      guitar: this.tr('timbre_guitar'),
+      synth: this.tr('timbre_synth'),
+      crystal: this.tr('timbre_crystal'),
+    });
+  }
+
   private handleLocaleChange(pref: LocaleId | 'auto'): void {
     saveLocalePreference(pref);
     this.localePref = pref;
     this.locale = pref === 'auto' ? detectBrowserLocale() : pref;
     this.midi.setLocale(this.locale);
+    this.syncWheelTimbreLabels();
     this.ui.setLocale(this.locale, this.localePref);
     this.syncLooperUi();
     this.syncMidiUi();
@@ -257,9 +270,6 @@ class AirStringsApp {
     this.audio.setTimbre(this.settings.timbre);
     this.audio.setSpaceFx(this.settings.spaceFx);
     this.audio.setLocalMute(this.settings.localMute);
-    if (this.strings.strings.length === 0) {
-      this.strings.loadPreset('web');
-    }
     this.ui.hideStartOverlay();
     this.ui.showToast(this.tr('toastDemoReady'));
   }
@@ -288,8 +298,8 @@ class AirStringsApp {
     onStatus?.(this.tr('statusReqCam'));
     const stream = await navigator.mediaDevices.getUserMedia({
       video: {
-        width: { ideal: 1280 },
-        height: { ideal: 720 },
+        width: { ideal: 1920 },
+        height: { ideal: 1080 },
         frameRate: { ideal: 30, max: 60 },
         facingMode: 'user',
       },
@@ -324,6 +334,7 @@ class AirStringsApp {
     this.latestPose = null;
     this.latestFace = null;
     this.bgSwipe.reset();
+    this.timbreWheel.reset();
     this.renderer.attachVideo(null);
     this.renderer.updateSegmentationMask(null);
     if (this.cameraStream) {
@@ -343,11 +354,17 @@ class AirStringsApp {
       this.ui.showToast(this.tr('toastRecDone'));
     } else {
       void this.audio.resume().then(() => {
-        const ok = this.recorder.start(this.renderer.canvas, this.audio.getRecordingStream());
+        const res = this.renderer.setRecordingHighRes(true);
+        const ok = this.recorder.start(
+          this.renderer.canvas,
+          this.audio.getRecordingStream(),
+          () => this.renderer.setRecordingHighRes(false)
+        );
         if (ok) {
           this.ui.setRecordingState(true, 0);
-          this.ui.showToast(this.tr('toastRecStart'));
+          this.ui.showToast(`${this.tr('toastRecStart')} (${res.width}×${res.height})`);
         } else {
+          this.renderer.setRecordingHighRes(false);
           this.ui.showToast(this.tr('toastRecUnsupported'));
         }
       });
@@ -681,18 +698,50 @@ class AirStringsApp {
         );
       }
 
-      // Close-up open-hand swipe across face -> randomly switch to a different stage background!
-      const bgSwipeTrigger = this.bgSwipe.update(this.latestHands, nowMs);
-      if (bgSwipeTrigger) {
-        const nextMode = pickRandomNextBg(this.settings.cameraFilter, BG_CYCLE);
-        this.handleSettingChange('cameraFilter', nextMode);
-        this.ui.setActiveBgMode(nextMode);
-        this.audio.playLockChime(bgSwipeTrigger.direction > 0 ? 587.33 : 440);
-        this.renderer.spawnBgSwipeFlash(bgSwipeTrigger.point);
-        this.ui.showToast(
-          this.tr('toastBg', { name: this.tr(`bg_${nextMode}` as TranslationKey) })
-        );
+      // Close-up open-hand swipe across face -> cycle stage background sequentially in loop!
+      if (!this.timbreWheel.isActive()) {
+        const bgSwipeTrigger = this.bgSwipe.update(this.latestHands, nowMs);
+        if (bgSwipeTrigger) {
+          const nextMode = pickNextCyclicBg(this.settings.cameraFilter, BG_CYCLE);
+          this.handleSettingChange('cameraFilter', nextMode);
+          this.ui.setActiveBgMode(nextMode);
+          this.audio.playLockChime(bgSwipeTrigger.direction > 0 ? 587.33 : 440);
+          this.renderer.spawnBgSwipeFlash(bgSwipeTrigger.point);
+          this.ui.showToast(
+            this.tr('toastBg', { name: this.tr(`bg_${nextMode}` as TranslationKey) })
+          );
+        }
       }
+    }
+
+    // Closed-fist Holographic 5-Sector Timbre Wheel controller
+    const busyHands = this.strings.getBusyHandIds();
+    const wheelEvents = this.timbreWheel.update(
+      this.strings.isCreatingWithHands() ? [] : this.latestHands,
+      this.settings.timbre,
+      busyHands,
+      this.renderer.getAspect(),
+      dtSec,
+      nowMs
+    );
+    if (wheelEvents.opened) {
+      void this.audio.resume().then(() => this.audio.playLockChime(523.25));
+    }
+    if (wheelEvents.auditionTimbre) {
+      const previewTimbre = wheelEvents.auditionTimbre;
+      void this.audio.resume().then(() => {
+        this.audio.pluck(9998, 329.63, 0.62, 0.35, 0, previewTimbre);
+      });
+    }
+    if (wheelEvents.confirmedTimbre) {
+      const nextTimbre = wheelEvents.confirmedTimbre;
+      const sectorIdx = Math.max(0, TIMBRE_WHEEL_ORDER.indexOf(nextTimbre));
+      this.handleSettingChange('timbre', nextTimbre);
+      this.ui.setActiveTimbre(nextTimbre);
+      this.renderer.spawnTimbreConfirmBurst(wheelEvents.snapshot.anchor, sectorIdx);
+      this.ui.showToast(
+        this.tr('toastTimbre', { name: this.tr(`timbre_${nextTimbre}` as TranslationKey) })
+      );
     }
 
     const extraFingers: ActiveFinger[] = [];
@@ -716,7 +765,16 @@ class AirStringsApp {
       this.prevPointerPos = { ...this.pointerPos };
     }
 
-    const events = this.strings.update(this.latestHands, extraFingers, dtSec, nowMs);
+    // Suppress accidental plucks/mutes on the hand controlling or just releasing the Timbre Wheel
+    const handsForStrings = wheelEvents.suppressPluckHandId
+      ? this.latestHands.map((h) =>
+          h.id === wheelEvents.suppressPluckHandId
+            ? { ...h, activeFingers: [], openPalm: false }
+            : h
+        )
+      : this.latestHands;
+
+    const events = this.strings.update(handsForStrings, extraFingers, dtSec, nowMs);
     this.handleFrameEvents(events, nowMs);
 
     const loopTick = this.looper.update(dtSec, nowMs);
@@ -741,7 +799,8 @@ class AirStringsApp {
       loopSnapshot,
       nowMs,
       this.latestPose,
-      this.latestFace
+      this.latestFace,
+      wheelEvents.snapshot
     );
 
     this.fpsAccum += dtSec;

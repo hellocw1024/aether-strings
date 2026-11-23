@@ -80,6 +80,18 @@ export class StringManager {
     }
   }
 
+  getBusyHandIds(): Set<string> {
+    const busy = new Set<string>();
+    for (const s of this.strings) {
+      if (s.grabHandId) busy.add(s.grabHandId);
+    }
+    return busy;
+  }
+
+  isCreatingWithHands(): boolean {
+    return this.creatingWithHands;
+  }
+
   private computeLength(p1: Vec2, p2: Vec2): number {
     return aspectDistance(p1, p2, this.aspect);
   }

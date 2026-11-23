@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import processorSrc from '../../../public/audio/karplus-processor.js?raw';
 import { MidiEngine, type MidiAccessLike, type MidiOutputLike } from '../../audio/MidiEngine';
+import { computeRecordingResolution } from '../../media/Recorder';
 import { AirLooper } from '../../music/AirLooper';
 import type { PluckEvent } from '../../types';
 
@@ -281,5 +282,23 @@ describe('Karplus-Strong AudioWorklet DSP stability', () => {
     expect(hfRatioByTimbre.synth).toBeGreaterThan(hfRatioByTimbre.guitar * 1.3);
     // 3. Crystal bowl has a smooth velvet mallet onset (low early/mid ratio) compared to crisp plucked guzheng
     expect(attackRiseByTimbre.crystal).toBeLessThan(attackRiseByTimbre.guzheng * 0.45);
+  });
+});
+
+describe('High-Resolution Performance Recorder sizing', () => {
+  it('guarantees even Full-HD+ dimensions (>=1920px long edge, <=2560px) across compact 1x and Retina displays', () => {
+    // Compact split-screen pane at 1x DPR -> boosts natively to >= 1920px long edge!
+    const compact = computeRecordingResolution(1001, 603, 1);
+    expect(compact.width % 2).toBe(0);
+    expect(compact.height % 2).toBe(0);
+    expect(Math.max(compact.width, compact.height)).toBeGreaterThanOrEqual(1920);
+    expect(Math.max(compact.width, compact.height)).toBeLessThanOrEqual(2560);
+
+    // 1440x900 Retina MacBook -> caps smoothly at 2560px QHD 2K
+    const retina = computeRecordingResolution(1440, 900, 2);
+    expect(retina.width % 2).toBe(0);
+    expect(retina.height % 2).toBe(0);
+    expect(retina.width).toBe(2560);
+    expect(retina.height).toBe(1600);
   });
 });

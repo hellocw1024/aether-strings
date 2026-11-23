@@ -17,17 +17,15 @@ interface SwipeTrack {
 }
 
 /**
- * Picks a random background mode strictly different from `current`.
+ * Cycles sequentially to the next background mode in round-robin loop order.
  */
-export function pickRandomNextBg(
+export function pickNextCyclicBg(
   current: CameraFilterMode,
-  modes: readonly CameraFilterMode[],
-  rng: () => number = Math.random
+  modes: readonly CameraFilterMode[]
 ): CameraFilterMode {
-  const candidates = modes.filter((m) => m !== current);
-  if (candidates.length === 0) return current;
-  const idx = Math.min(candidates.length - 1, Math.floor(rng() * candidates.length));
-  return candidates[idx];
+  if (modes.length === 0) return current;
+  const idx = modes.indexOf(current);
+  return modes[(idx + 1) % modes.length];
 }
 
 /**

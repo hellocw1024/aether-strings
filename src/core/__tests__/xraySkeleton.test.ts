@@ -106,6 +106,7 @@ function makeMockHand(wristX: number, wristY: number): TrackedHand {
     openPalm: false,
     backFacing: false,
     fiveFingersOpen: true,
+    closedFist: false,
     extendedFingers: [4, 8, 12, 16, 20],
     activeFingers: [],
   };

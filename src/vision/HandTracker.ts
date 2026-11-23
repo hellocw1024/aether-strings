@@ -409,6 +409,31 @@ export class HandTracker {
       // Determine extended fingertips (isotropic aspect-corrected)
       const extendedFingers = this.detectExtendedFingers(landmarks, palmSize, videoAspect);
 
+      const wrist = landmarks[0];
+      const mainFingerPairs: [number, number][] = [
+        [8, 6],
+        [12, 10],
+        [16, 14],
+        [20, 18],
+      ];
+
+      // Closed Fist: all 4 main fingers curled tightly toward wrist/palm (used to summon Holographic Timbre Wheel!)
+      const avgTipReach =
+        (distAspect(landmarks[8], wrist) +
+          distAspect(landmarks[12], wrist) +
+          distAspect(landmarks[16], wrist) +
+          distAspect(landmarks[20], wrist)) *
+        0.25;
+      const curledMainCount = mainFingerPairs.filter(
+        ([tip, pip]) => distAspect(landmarks[tip], wrist) < distAspect(landmarks[pip], wrist) * 1.05
+      ).length;
+      const closedFist = curledMainCount === 4 && avgTipReach < palmSize * 1.24;
+
+      // Prevent a tight fist (thumb folded over index) from falsely triggering Pinch string creation
+      if (closedFist) {
+        slot.pinchActive = false;
+      }
+
       const fourExtended =
         extendedFingers.includes(8) &&
         extendedFingers.includes(12) &&
@@ -417,26 +442,13 @@ export class HandTracker {
 
       // Forgiving open-hand posture for rapid close-up face-swipes: allows natural slight inward finger
       // curvature toward the face while still strictly rejecting fists, pinches, and 1-2 finger plucking!
-      const wrist = landmarks[0];
-      const uncurledMainCount = (
-        [
-          [8, 6],
-          [12, 10],
-          [16, 14],
-          [20, 18],
-        ] as [number, number][]
-      ).filter(([tip, pip]) => distAspect(landmarks[tip], wrist) > distAspect(landmarks[pip], wrist) * 1.03)
-        .length;
-      const avgTipReach =
-        (distAspect(landmarks[8], wrist) +
-          distAspect(landmarks[12], wrist) +
-          distAspect(landmarks[16], wrist) +
-          distAspect(landmarks[20], wrist)) *
-        0.25;
-      const fiveFingersOpen = !slot.pinchActive && uncurledMainCount >= 4 && avgTipReach > palmSize * 1.42;
+      const uncurledMainCount = mainFingerPairs.filter(
+        ([tip, pip]) => distAspect(landmarks[tip], wrist) > distAspect(landmarks[pip], wrist) * 1.03
+      ).length;
+      const fiveFingersOpen = !closedFist && !slot.pinchActive && uncurledMainCount >= 4 && avgTipReach > palmSize * 1.42;
 
       // Open Palm Mute: all 4 main fingers extended, moving gently (stationary mute — disjoint from fast face swipe)
-      const openPalm = !slot.pinchActive && fourExtended && palmSpeed < 0.36;
+      const openPalm = !closedFist && !slot.pinchActive && fourExtended && palmSpeed < 0.36;
 
       // Suppress accidental string plucks while performing a fast close-up open-hand swipe across the face
       const isCloseSwipePosture = fiveFingersOpen && palmSize >= 0.125 && palmSpeed > 0.34;
@@ -448,7 +460,7 @@ export class HandTracker {
         const prev = slot.prevFingerPos.get(tipIdx) ?? pt;
         slot.prevFingerPos.set(tipIdx, pt);
 
-        if (isCloseSwipePosture || !extendedFingers.includes(tipIdx)) continue;
+        if (closedFist || isCloseSwipePosture || !extendedFingers.includes(tipIdx)) continue;
         const speed = Math.hypot(pt.x - prev.x, pt.y - prev.y) / dtSec;
         activeFingers.push({
           id: `${slot.id}-${tipIdx}`,
@@ -472,6 +484,7 @@ export class HandTracker {
         openPalm,
         backFacing,
         fiveFingersOpen,
+        closedFist,
         extendedFingers,
         activeFingers,
       });

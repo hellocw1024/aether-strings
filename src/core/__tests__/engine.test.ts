@@ -30,6 +30,7 @@ function makeHand(
     openPalm: opts.openPalm ?? false,
     backFacing: opts.backFacing ?? false,
     fiveFingersOpen: opts.fiveFingersOpen ?? false,
+    closedFist: opts.closedFist ?? false,
     extendedFingers: opts.extendedFingers ?? [8],
     activeFingers: opts.activeFingers ?? [],
   };

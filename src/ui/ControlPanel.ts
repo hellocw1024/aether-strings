@@ -693,6 +693,12 @@ export class ControlPanel {
     if (btn) this.setActiveGroup('[data-bg-btn]', btn);
   }
 
+  setActiveTimbre(timbre: TimbreId): void {
+    this.settings.timbre = timbre;
+    const sel = this.root.querySelector<HTMLSelectElement>('#sel-timbre');
+    if (sel) sel.value = timbre;
+  }
+
   setRecordingState(recording: boolean, elapsedSec = 0): void {
     this.recording = recording;
     this.recElapsedSec = elapsedSec;

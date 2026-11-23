@@ -13,12 +13,15 @@ import type {
   ResonancePair,
   ShockwaveShape,
   ThemeId,
+  TimbreId,
+  TimbreWheelSnapshot,
   TrackedFace,
   TrackedHand,
   TrackedPose,
   Vec2,
 } from '../types';
 import type { SegmentationFrame } from '../vision/HandTracker';
+import { computeRecordingResolution } from '../media/Recorder';
 import { samplePitchColor, THEMES, type ThemeConfig } from './themes';
 import { drawXrayBodySkeleton, drawXrayHandSkeleton, type XrayDrawSink } from './xraySkeleton';
 import { XraySkullRig } from './XraySkullRig';
@@ -645,6 +648,7 @@ export class StageRenderer {
   private width = 1280;
   private height = 720;
   private dpr = 1;
+  private recordingHighRes = false;
 
   // Pass 1: Background camera + 5 artistic theme shaders (+ Pass 1b: crisp non-bloomed X-Ray skull)
   private bgScene = new THREE.Scene();
@@ -695,10 +699,19 @@ export class StageRenderer {
   private compCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
   private compMaterial: THREE.ShaderMaterial;
 
-  // Pass 4: Post-composite crisp Retina Pitch Label Sprite overlay (never blurred by Bloom!)
+  // Pass 4: Post-composite crisp Retina Pitch Label & Holographic Timbre Wheel Sprites (never blurred by Bloom!)
   private labelScene = new THREE.Scene();
   private labelSprites: THREE.Sprite[] = [];
   private labelTextureCache = new Map<string, THREE.CanvasTexture>();
+  private wheelLabelSprites: THREE.Sprite[] = [];
+  private wheelLabelCache = new Map<string, THREE.CanvasTexture>();
+  private timbreLabels: Record<TimbreId, string> = {
+    harp: '空灵竖琴',
+    guzheng: '古筝弹拨',
+    guitar: '尼龙吉他',
+    synth: '赛博电弦',
+    crystal: '水晶颂钵',
+  };
 
   private theme: ThemeConfig = THEMES.plasma;
   private cameraFilterMode: CameraFilterMode = 'cinema';
@@ -720,8 +733,10 @@ export class StageRenderer {
       powerPreference: 'high-performance',
       preserveDrawingBuffer: false,
     });
-    this.renderer.setPixelRatio(this.dpr);
-    this.renderer.setSize(this.width, this.height);
+    this.renderer.setPixelRatio(1);
+    const rw = Math.max(2, Math.round((this.width * this.dpr) / 2) * 2);
+    const rh = Math.max(2, Math.round((this.height * this.dpr) / 2) * 2);
+    this.renderer.setSize(rw, rh, false);
     this.renderer.toneMapping = THREE.NoToneMapping;
     this.renderer.autoClear = false;
     this.canvas = this.renderer.domElement;
@@ -731,9 +746,6 @@ export class StageRenderer {
     const rtType = this.renderer.capabilities.isWebGL2
       ? THREE.HalfFloatType
       : THREE.UnsignedByteType;
-
-    const rw = Math.max(1, Math.floor(this.width * this.dpr));
-    const rh = Math.max(1, Math.floor(this.height * this.dpr));
 
     // --- Pass 1: Background ---
     this.bgTarget = new THREE.WebGLRenderTarget(rw, rh, {
@@ -944,8 +956,8 @@ export class StageRenderer {
       stencilBuffer: false,
     });
     this.fxComposer = new EffectComposer(this.renderer, fxRT);
-    this.fxComposer.setPixelRatio(this.dpr);
-    this.fxComposer.setSize(this.width, this.height);
+    this.fxComposer.setPixelRatio(1);
+    this.fxComposer.setSize(rw, rh);
     this.fxComposer.renderToScreen = false;
 
     const renderPass = new RenderPass(this.fxScene, this.fxCamera);
@@ -955,7 +967,7 @@ export class StageRenderer {
     this.fxComposer.addPass(renderPass);
 
     this.bloomPass = new UnrealBloomPass(
-      new THREE.Vector2(this.width, this.height),
+      new THREE.Vector2(rw, rh),
       this.theme.bloomStrength,
       this.theme.bloomRadius,
       this.theme.bloomThreshold
@@ -989,6 +1001,21 @@ export class StageRenderer {
       sprite.visible = false;
       this.labelScene.add(sprite);
       this.labelSprites.push(sprite);
+    }
+
+    // Pre-allocate 5 crisp Retina badges for the Holographic Timbre Wheel
+    for (let i = 0; i < 5; i++) {
+      const mat = new THREE.SpriteMaterial({
+        transparent: true,
+        depthTest: false,
+        depthWrite: false,
+        toneMapped: false,
+      });
+      const sprite = new THREE.Sprite(mat);
+      sprite.visible = false;
+      sprite.renderOrder = 20;
+      this.labelScene.add(sprite);
+      this.wheelLabelSprites.push(sprite);
     }
 
     this.xraySink = {
@@ -1030,6 +1057,12 @@ export class StageRenderer {
 
   setHandVisual(mode: HandVisualMode): void {
     this.handVisual = mode;
+  }
+
+  setTimbreLabels(labels: Record<TimbreId, string>): void {
+    this.timbreLabels = { ...labels };
+    for (const tex of this.wheelLabelCache.values()) tex.dispose();
+    this.wheelLabelCache.clear();
   }
 
   setMirror(mirror: boolean): void {
@@ -1105,20 +1138,39 @@ export class StageRenderer {
     this.bgMaterial.uniforms.uHasSegMask.value = 1;
   }
 
+  setRecordingHighRes(active: boolean): { width: number; height: number } {
+    this.recordingHighRes = active;
+    return this.applyResolution();
+  }
+
   resize(width: number, height: number): void {
     this.width = Math.max(320, width);
     this.height = Math.max(240, height);
-    this.dpr = Math.min(window.devicePixelRatio || 1, 2);
+    this.applyResolution();
+  }
 
-    this.renderer.setPixelRatio(this.dpr);
-    this.renderer.setSize(this.width, this.height);
+  private applyResolution(): { width: number; height: number } {
+    const deviceDpr = window.devicePixelRatio || 1;
+    let rw: number;
+    let rh: number;
 
-    const rw = Math.max(1, Math.floor(this.width * this.dpr));
-    const rh = Math.max(1, Math.floor(this.height * this.dpr));
+    if (this.recordingHighRes) {
+      const rec = computeRecordingResolution(this.width, this.height, deviceDpr);
+      rw = rec.width;
+      rh = rec.height;
+      this.dpr = rec.dpr;
+    } else {
+      this.dpr = Math.min(deviceDpr, 2);
+      rw = Math.max(2, Math.round((this.width * this.dpr) / 2) * 2);
+      rh = Math.max(2, Math.round((this.height * this.dpr) / 2) * 2);
+    }
+
+    this.renderer.setPixelRatio(1);
+    this.renderer.setSize(rw, rh, false);
     this.bgTarget.setSize(rw, rh);
-    this.fxComposer.setPixelRatio(this.dpr);
-    this.fxComposer.setSize(this.width, this.height);
-    this.bloomPass.setSize(this.width, this.height);
+    this.fxComposer.setPixelRatio(1);
+    this.fxComposer.setSize(rw, rh);
+    this.bloomPass.setSize(rw, rh);
 
     this.fxCamera.right = this.width;
     this.fxCamera.top = this.height;
@@ -1126,6 +1178,7 @@ export class StageRenderer {
 
     this.bgMaterial.uniforms.uScreenAspect.value = this.width / this.height;
     this.bgMaterial.uniforms.uResolution.value.set(rw, rh);
+    return { width: rw, height: rh };
   }
 
   getAspect(): number {
@@ -1304,6 +1357,49 @@ export class StageRenderer {
     if (this.shockwaves.length > 26) this.shockwaves.shift();
   }
 
+  spawnTimbreConfirmBurst(anchor: Vec2, sectorIndex: number): void {
+    const cx = anchor.x * this.width;
+    const cy = (1 - anchor.y) * this.height;
+    const baseR = Math.min(this.width, this.height) * 0.22;
+    const midR = baseR * 0.65;
+    const ang = (sectorIndex / 5) * Math.PI * 2;
+    const bx = cx + Math.sin(ang) * midR;
+    const by = cy + Math.cos(ang) * midR;
+    const [tr, tg, tb] = this.theme.trailColor;
+
+    this.shockwaves.push({
+      x: bx,
+      y: by,
+      radius: 16,
+      maxRadius: baseR * 0.95,
+      r: tr * 1.4,
+      g: tg * 1.4,
+      b: tb * 1.4,
+      life: 0,
+      maxLife: 0.44,
+      shape: 'hex',
+      rotSpeed: 1.8,
+      angle: ang,
+    });
+    if (this.shockwaves.length > 26) this.shockwaves.shift();
+
+    for (let i = 0; i < 28; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const spd = 80 + Math.random() * 210;
+      this.emitSpark(
+        bx,
+        by,
+        Math.cos(a) * spd,
+        Math.sin(a) * spd,
+        tr * 1.6,
+        tg * 1.6,
+        tb * 1.6,
+        0.35 + Math.random() * 0.42,
+        (3.5 + Math.random() * 4.5) * this.dpr
+      );
+    }
+  }
+
   spawnGhostPluckBurst(point: Vec2, pitchNorm: number, velocity: number): void {
     const px = point.x * this.width;
     const py = (1 - point.y) * this.height;
@@ -1391,7 +1487,8 @@ export class StageRenderer {
     loopSnapshot?: LoopRenderSnapshot,
     nowMs = performance.now(),
     pose: TrackedPose | null = null,
-    face: TrackedFace | null = null
+    face: TrackedFace | null = null,
+    timbreWheel: TimbreWheelSnapshot | null = null
   ): void {
     const safeDt = Math.max(1 / 240, Math.min(0.08, dtSec));
     this.elapsedSec += safeDt;
@@ -1466,6 +1563,11 @@ export class StageRenderer {
       this.drawHand(hand);
     }
 
+    // 7b. Cyberpunk Holographic 5-Sector Timbre Wheel (summoned by holding closed fist)
+    if (timbreWheel && timbreWheel.phase !== 'idle') {
+      this.drawTimbreWheel(timbreWheel);
+    }
+
     if (pointerPos && hands.length === 0) {
       const px = pointerPos.x * this.width;
       const py = (1 - pointerPos.y) * this.height;
@@ -1480,8 +1582,9 @@ export class StageRenderer {
     // 8. GPU particles
     this.updateSparks(safeDt);
 
-    // 9. Update crisp pitch-label sprites positioned at one end of each string (+ preview)
+    // 9. Update crisp pitch-label sprites & holographic timbre wheel sector badges
     this.updatePitchLabels(strings, preview);
+    this.updateTimbreWheelLabels(timbreWheel);
 
     // --- Execute Multi-Pass Pipeline ---
     // Pass 1: Background -> bgTarget
@@ -1869,6 +1972,256 @@ export class StageRenderer {
     tex.magFilter = THREE.LinearFilter;
     tex.needsUpdate = true;
     this.labelTextureCache.set(key, tex);
+    return tex;
+  }
+
+  /**
+   * Renders the Iron-Man style 5-sector Cyberpunk Holographic Timbre Wheel in HDR fxScene.
+   */
+  private drawTimbreWheel(wheel: TimbreWheelSnapshot): void {
+    const cx = wheel.anchor.x * this.width;
+    const cy = (1 - wheel.anchor.y) * this.height;
+    const [ar, ag, ab] = this.theme.trailColor;
+    const [pr, pg, pb] = this.theme.pinchRingColor;
+
+    // Helper: clockwise angle `a` from 12 o'clock UP -> Y-up fxCamera point
+    const polar = (r: number, a: number): [number, number] => [
+      cx + Math.sin(a) * r,
+      cy + Math.cos(a) * r,
+    ];
+
+    if (wheel.phase === 'charging') {
+      const r = 34;
+      // Subtle dim charge track
+      this.pushRing(cx, cy, r, 1.8, ar * 0.3, ag * 0.3, ab * 0.3, 28);
+      // Glowing clockwise charge progress arc
+      const steps = Math.max(2, Math.round(32 * wheel.chargeProgress));
+      const maxAng = wheel.chargeProgress * Math.PI * 2;
+      let [px, py] = polar(r, 0);
+      for (let i = 1; i <= steps; i++) {
+        const a = (i / steps) * maxAng;
+        const [nx, ny] = polar(r, a);
+        this.pushSegment(px, py, nx, ny, 3.6, ar * 1.55, ag * 1.55, ab * 1.55);
+        px = nx;
+        py = ny;
+      }
+      this.pushPolygonRing(cx, cy, 10, 1.8, pr * 1.3, pg * 1.3, pb * 1.3, 4, this.elapsedSec * 2.5);
+      return;
+    }
+
+    // Open 5-sector Holographic Wheel!
+    const ease = 1 - Math.pow(1 - wheel.openAnim, 3);
+    const outerR = Math.min(this.width, this.height) * 0.225 * ease;
+    const innerR = outerR * 0.33;
+    if (outerR < 16) return;
+
+    const sectorCount = wheel.sectors.length;
+    const sectorSpan = (Math.PI * 2) / sectorCount;
+
+    // 1. Outer double telemetry rings + rotating fine tick ring
+    this.pushRing(cx, cy, outerR, 2.0, ar * 0.72, ag * 0.72, ab * 0.72, 60);
+    this.pushRing(cx, cy, outerR * 1.065, 1.1, ar * 0.32, ag * 0.32, ab * 0.32, 60);
+    this.pushRing(cx, cy, innerR, 1.8, ar * 0.65, ag * 0.65, ab * 0.65, 36);
+    this.pushPolygonRing(
+      cx,
+      cy,
+      innerR * 0.72,
+      1.2,
+      ar * 0.42,
+      ag * 0.42,
+      ab * 0.42,
+      6,
+      -this.elapsedSec * 0.9
+    );
+
+    const tickCount = 30;
+    const tickRot = this.elapsedSec * 0.22;
+    for (let i = 0; i < tickCount; i++) {
+      const a = (i / tickCount) * Math.PI * 2 + tickRot;
+      const major = i % 6 === 0;
+      const [x0, y0] = polar(outerR * 1.02, a);
+      const [x1, y1] = polar(outerR * (major ? 1.11 : 1.07), a);
+      this.pushSegment(x0, y0, x1, y1, major ? 1.8 : 1.1, ar * 0.55, ag * 0.55, ab * 0.55);
+    }
+
+    // 2. Five radial sector divider spokes
+    for (let i = 0; i < sectorCount; i++) {
+      const aDiv = (i - 0.5) * sectorSpan;
+      const [ix, iy] = polar(innerR, aDiv);
+      const [ox, oy] = polar(outerR, aDiv);
+      this.pushSegment(ix, iy, ox, oy, 1.6, ar * 0.52, ag * 0.52, ab * 0.52);
+    }
+
+    // 3. Sector highlights (hovered glowing wedge + currently equipped timbre indicator)
+    for (let i = 0; i < sectorCount; i++) {
+      const isHovered = wheel.hoveredIndex === i;
+      const isActive = wheel.sectors[i] === wheel.activeTimbre;
+      if (!isHovered && !isActive) continue;
+
+      const a0 = (i - 0.5) * sectorSpan + 0.04;
+      const a1 = (i + 0.5) * sectorSpan - 0.04;
+      const segs = 12;
+
+      const [cr, cg, cb] = isHovered ? [ar, ag, ab] : [pr, pg, pb];
+      const fillGain = isHovered ? 0.24 : 0.08;
+
+      for (let s = 0; s < segs; s++) {
+        const t0 = a0 + ((a1 - a0) * s) / segs;
+        const t1 = a0 + ((a1 - a0) * (s + 1)) / segs;
+        const [ix0, iy0] = polar(innerR + 3, t0);
+        const [ix1, iy1] = polar(innerR + 3, t1);
+        const [ox0, oy0] = polar(outerR - 3, t0);
+        const [ox1, oy1] = polar(outerR - 3, t1);
+        this.pushTri(ix0, iy0, ox0, oy0, ox1, oy1, cr * fillGain, cg * fillGain, cb * fillGain);
+        this.pushTri(ix0, iy0, ox1, oy1, ix1, iy1, cr * fillGain, cg * fillGain, cb * fillGain);
+
+        // Bright outer & inner arc rims
+        const rimGain = isHovered ? 1.55 : 0.85;
+        this.pushSegment(ox0, oy0, ox1, oy1, isHovered ? 4.4 : 2.2, cr * rimGain, cg * rimGain, cb * rimGain);
+        this.pushSegment(ix0, iy0, ix1, iy1, isHovered ? 2.6 : 1.8, cr * rimGain * 0.8, cg * rimGain * 0.8, cb * rimGain * 0.8);
+      }
+    }
+
+    // 4. Live fist cursor tether & targeting reticle
+    const rawCurX = wheel.cursor.x * this.width;
+    const rawCurY = (1 - wheel.cursor.y) * this.height;
+    const dx = rawCurX - cx;
+    const dy = rawCurY - cy;
+    const distPx = Math.hypot(dx, dy);
+    const clampedR = Math.min(distPx, outerR * 1.12);
+    const curX = distPx > 1 ? cx + (dx / distPx) * clampedR : cx;
+    const curY = distPx > 1 ? cy + (dy / distPx) * clampedR : cy;
+
+    if (clampedR > 8) {
+      this.pushSegment(cx, cy, curX, curY, 2.2, ar * 1.1, ag * 1.1, ab * 1.1);
+    }
+    this.pushFilledCircle(cx, cy, 4.5, ar * 1.2, ag * 1.2, ab * 1.2, 10);
+    this.pushPolygonRing(curX, curY, 11, 2.4, 1.5, 1.65, 1.8, 4, Math.PI * 0.25);
+    this.pushFilledCircle(curX, curY, 3.6, 1.6, 1.75, 1.9, 10);
+  }
+
+  /**
+   * Positions 5 crisp non-bloomed Retina cyber badges over the 5 sectors of the Timbre Wheel.
+   */
+  private updateTimbreWheelLabels(wheel: TimbreWheelSnapshot | null): void {
+    if (!wheel || wheel.phase !== 'open' || wheel.openAnim < 0.08) {
+      for (const s of this.wheelLabelSprites) s.visible = false;
+      return;
+    }
+
+    const ease = 1 - Math.pow(1 - wheel.openAnim, 3);
+    const cx = wheel.anchor.x * this.width;
+    const cy = (1 - wheel.anchor.y) * this.height;
+    const outerR = Math.min(this.width, this.height) * 0.225 * ease;
+    const midR = outerR * 0.67;
+
+    const accentHex = new THREE.Color(...this.theme.trailColor).getHexString();
+    const activeHex = new THREE.Color(...this.theme.pinchRingColor).getHexString();
+
+    for (let i = 0; i < 5; i++) {
+      const sprite = this.wheelLabelSprites[i];
+      const timbreId = wheel.sectors[i];
+      const label = this.timbreLabels[timbreId] ?? timbreId;
+      const isHovered = wheel.hoveredIndex === i;
+      const isActive = timbreId === wheel.activeTimbre;
+      const ang = (i / 5) * Math.PI * 2;
+
+      const tx = cx + Math.sin(ang) * midR;
+      const ty = cy + Math.cos(ang) * midR;
+
+      const tex = this.getOrCreateWheelBadgeTexture(
+        i + 1,
+        label,
+        isHovered ? 'hover' : isActive ? 'active' : 'idle',
+        isHovered ? accentHex : activeHex
+      );
+      const mat = sprite.material as THREE.SpriteMaterial;
+      if (mat.map !== tex) {
+        mat.map = tex;
+        mat.needsUpdate = true;
+      }
+      mat.opacity = Math.min(1, ease * (isHovered ? 1.0 : 0.90));
+
+      const scaleBoost = (isHovered ? 1.14 : 1.0) * (0.7 + 0.3 * ease);
+      sprite.position.set(tx, ty, 5);
+      sprite.scale.set(112 * scaleBoost, 34 * scaleBoost, 1);
+      sprite.visible = true;
+    }
+  }
+
+  private getOrCreateWheelBadgeTexture(
+    num: number,
+    text: string,
+    state: 'idle' | 'active' | 'hover',
+    hexColor: string
+  ): THREE.CanvasTexture {
+    const key = `${num}:${text}:${state}:${hexColor}`;
+    const cached = this.wheelLabelCache.get(key);
+    if (cached) return cached;
+
+    if (this.wheelLabelCache.size > 60) {
+      for (const tex of this.wheelLabelCache.values()) tex.dispose();
+      this.wheelLabelCache.clear();
+    }
+
+    const cw = 260;
+    const ch = 78;
+    const canvas = document.createElement('canvas');
+    canvas.width = cw;
+    canvas.height = ch;
+    const ctx = canvas.getContext('2d')!;
+
+    const accent = `#${hexColor}`;
+    const cut = 12;
+
+    ctx.clearRect(0, 0, cw, ch);
+    ctx.beginPath();
+    ctx.moveTo(cut + 4, 5);
+    ctx.lineTo(cw - 5, 5);
+    ctx.lineTo(cw - 5, ch - cut - 4);
+    ctx.lineTo(cw - cut - 4, ch - 5);
+    ctx.lineTo(5, ch - 5);
+    ctx.lineTo(5, cut + 4);
+    ctx.closePath();
+
+    ctx.fillStyle =
+      state === 'hover'
+        ? 'rgba(10, 32, 54, 0.94)'
+        : state === 'active'
+          ? 'rgba(14, 24, 38, 0.90)'
+          : 'rgba(5, 11, 22, 0.84)';
+    ctx.fill();
+
+    ctx.lineWidth = state === 'hover' ? 3.5 : 2.0;
+    ctx.strokeStyle =
+      state === 'hover' ? accent : state === 'active' ? accent : 'rgba(130, 195, 230, 0.45)';
+    ctx.stroke();
+
+    // Left vertical indicator bar
+    ctx.fillStyle = state === 'idle' ? 'rgba(130, 195, 230, 0.5)' : accent;
+    ctx.fillRect(14, 18, 5, ch - 36);
+
+    // Index number tag "01".."05"
+    ctx.font = '700 20px "SF Mono", "JetBrains Mono", Menlo, monospace';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = state === 'hover' ? accent : 'rgba(165, 215, 245, 0.72)';
+    ctx.fillText(`0${num}`, 28, ch * 0.51);
+
+    // Localized timbre name (auto-fits longer European/Arabic strings cleanly)
+    ctx.font = '600 25px "PingFang SC", "Noto Sans", system-ui, sans-serif';
+    ctx.fillStyle = state === 'hover' ? '#ffffff' : '#dbeeff';
+    if (state === 'hover') {
+      ctx.shadowColor = accent;
+      ctx.shadowBlur = 10;
+    }
+    ctx.fillText(text, 66, ch * 0.52, cw - 82);
+
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.minFilter = THREE.LinearFilter;
+    tex.magFilter = THREE.LinearFilter;
+    tex.needsUpdate = true;
+    this.wheelLabelCache.set(key, tex);
     return tex;
   }
 
@@ -2404,6 +2757,8 @@ export class StageRenderer {
     this.segTexture?.dispose();
     for (const tex of this.labelTextureCache.values()) tex.dispose();
     this.labelTextureCache.clear();
+    for (const tex of this.wheelLabelCache.values()) tex.dispose();
+    this.wheelLabelCache.clear();
     this.bgTarget.dispose();
     this.fxComposer.dispose();
     this.dynGeo.dispose();

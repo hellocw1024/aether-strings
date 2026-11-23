@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { BgSwipeDetector, isHandBackFacing, pickRandomNextBg } from '../BgSwipeDetector';
+import { BgSwipeDetector, isHandBackFacing, pickNextCyclicBg } from '../BgSwipeDetector';
 import type { CameraFilterMode, TrackedHand } from '../../types';
 
 function makeRawHand(indexX: number, pinkyX: number, wristY = 0.7, knuckleY = 0.45) {
@@ -23,24 +23,23 @@ function makeTrackedHand(overrides: Partial<TrackedHand>): TrackedHand {
     openPalm: false,
     backFacing: true,
     fiveFingersOpen: true,
+    closedFist: false,
     extendedFingers: [4, 8, 12, 16, 20],
     activeFingers: [],
     ...overrides,
   };
 }
 
-describe('Face-Swipe Random Background Switch', () => {
-  it('picks a random background strictly different from the current mode', () => {
+describe('Face-Swipe Cyclic Background Switch', () => {
+  it('cycles sequentially in round-robin loop order across all background modes', () => {
     const all: CameraFilterMode[] = ['cinema', 'portrait', 'cyber', 'xray', 'clean'];
-    for (const cur of all) {
-      const seen = new Set<CameraFilterMode>();
-      for (let step = 0; step < 20; step++) {
-        const next = pickRandomNextBg(cur, all, () => step / 20);
-        expect(next).not.toBe(cur);
-        seen.add(next);
-      }
-      expect(seen.size).toBe(all.length - 1);
+    let cur: CameraFilterMode = 'cinema';
+    const visited: CameraFilterMode[] = [];
+    for (let i = 0; i < all.length; i++) {
+      cur = pickNextCyclicBg(cur, all);
+      visited.push(cur);
     }
+    expect(visited).toEqual(['portrait', 'cyber', 'xray', 'clean', 'cinema']);
   });
 
   it('distinguishes back-of-hand vs palm-facing for Tasks Vision handedness', () => {
