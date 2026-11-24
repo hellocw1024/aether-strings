@@ -367,6 +367,8 @@ export class ControlPanel {
           <li><b>${this.tr('guideBendTitle')}</b>: ${this.tr('guideBendDesc')}</li>
           <li><b>${this.tr('guideDeleteTitle')}</b>: ${this.tr('guideDeleteDesc')}</li>
           <li><b>${this.tr('guideMuteTitle')}</b>: ${this.tr('guideMuteDesc')}</li>
+          <li><b>${this.tr('guideWheelTitle')}</b>: ${this.tr('guideWheelDesc')}</li>
+          <li><b>${this.tr('guideBgSwipeTitle')}</b>: ${this.tr('guideBgSwipeDesc')}</li>
           <li><b>${this.tr('guideLoopTitle')}</b>: ${this.tr('guideLoopDesc')}</li>
           <li><b>${this.tr('guideMidiTitle')}</b>: ${this.tr('guideMidiDesc')}</li>
           <li><b>${this.tr('guideMouseTitle')}</b>: ${this.tr('guideMouseDesc')}</li>
@@ -394,6 +396,14 @@ export class ControlPanel {
             <div class="gesture-item">
               <strong>${this.tr('startCard4Title')}</strong>
               <span>${this.tr('startCard4Desc')}</span>
+            </div>
+            <div class="gesture-item">
+              <strong>${this.tr('startCard5Title')}</strong>
+              <span>${this.tr('startCard5Desc')}</span>
+            </div>
+            <div class="gesture-item">
+              <strong>${this.tr('startCard6Title')}</strong>
+              <span>${this.tr('startCard6Desc')}</span>
             </div>
           </div>
           <div class="start-actions">

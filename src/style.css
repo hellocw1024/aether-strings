@@ -720,8 +720,10 @@ body,
 
 .start-card {
   position: relative;
-  width: min(640px, 100%);
-  padding: 30px 32px;
+  width: min(700px, 100%);
+  max-height: calc(100vh - 36px);
+  overflow-y: auto;
+  padding: 24px 28px;
   background: var(--scanline), rgba(5, 10, 22, 0.92);
   border: 1px solid var(--panel-border-hover);
   border-top: 2px solid var(--accent);
@@ -729,7 +731,7 @@ body,
   box-shadow: 0 28px 90px rgba(0, 0, 0, 0.78), 0 0 42px var(--accent-soft);
   display: flex;
   flex-direction: column;
-  gap: 18px;
+  gap: 14px;
 }
 
 .start-badge {

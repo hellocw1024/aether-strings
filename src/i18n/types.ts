@@ -147,6 +147,10 @@ export interface TranslationDict {
   guideDeleteDesc: string;
   guideMuteTitle: string;
   guideMuteDesc: string;
+  guideWheelTitle: string;
+  guideWheelDesc: string;
+  guideBgSwipeTitle: string;
+  guideBgSwipeDesc: string;
   guideLoopTitle: string;
   guideLoopDesc: string;
   guideMidiTitle: string;
@@ -165,6 +169,10 @@ export interface TranslationDict {
   startCard3Desc: string;
   startCard4Title: string;
   startCard4Desc: string;
+  startCard5Title: string;
+  startCard5Desc: string;
+  startCard6Title: string;
+  startCard6Desc: string;
   startCamCta: string;
   startDemoCta: string;
 
